@@ -1,0 +1,63 @@
+name: Verificação
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    name: ${{ matrix.nome }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nome: Windows PowerShell 5.1
+            shell: powershell
+          - nome: PowerShell 7
+            shell: pwsh
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Instalar Pester e PSScriptAnalyzer
+        run: |
+          Install-Module -Name Pester -RequiredVersion 6.2.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module -Name PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force
+
+      - name: Análise estática
+        run: |
+          Import-Module -Name PSScriptAnalyzer -RequiredVersion 1.25.0
+          $configuracao = './PSScriptAnalyzerSettings.psd1'
+          $achados = @(
+            Invoke-ScriptAnalyzer -Path ./AuditoriaWindows -Recurse -Settings $configuracao
+            Invoke-ScriptAnalyzer -Path ./Invoke-Auditoria.ps1 -Settings $configuracao
+          )
+          $achados | Format-Table -Property Severity, RuleName, ScriptName, Line, Message -AutoSize -Wrap | Out-String -Width 200
+          if ($achados.Count -gt 0) { exit 1 }
+
+      - name: Testes
+        run: |
+          Import-Module -Name Pester -RequiredVersion 6.2.0
+          $configuracao = New-PesterConfiguration
+          $configuracao.Run.Path = './tests'
+          $configuracao.Run.Exit = $true
+          $configuracao.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $configuracao
+
+      - name: Auditoria real do runner
+        run: ./Invoke-Auditoria.ps1 -Pasta ./relatorios
+
+      - name: Guardar o relatório do runner
+        if: matrix.shell == 'powershell'
+        uses: actions/upload-artifact@v7
+        with:
+          name: relatorio-runner
+          path: relatorios/
+          retention-days: 14
